@@ -1,4 +1,4 @@
-// Character plugins. Xing the monkey is built in; any other character lives in characters/<id>/:
+﻿// Character plugins. Xing the monkey is built in; any other character lives in characters/<id>/:
 //   character.json  — { "name": "Мини-пиг", "author": "...", "pixelArt": true, "fps": 9, "frames": 48, "sound": "pig",
 //                       "lines": { "error": "хрю?!" }, "poses": { "idle": "idle.png", "work": { "file": "work.gif" } } }
 //   one file per pose: a PNG strip of N equal frames side by side ("frames", per pose or global), or an animated GIF/WebP.
@@ -30,7 +30,7 @@ namespace XingPixel
             { "bash", "work" }, { "type", "work" }, { "read", "work" }, { "run", "work" }, { "work", "idle" }, { "think", "idle" },
             { "done", "happy" }, { "banana", "happy" }, { "love", "happy" }, { "stretch", "happy" }, { "happy", "idle" }, { "wave", "happy" },
             { "error", "idle" }, { "wait", "idle" }, { "milk", "idle" }, { "water", "milk" }, { "lunch", "milk" }, { "sleep", "idle" },
-            { "home", "wave" }, { "git_conflict", "error" } };
+            { "home", "wave" }, { "git_conflict", "error" }, { "spotify", "music" }, { "music", "happy" }, { "levelup", "happy" } };
 
         public static Character Load(string dir)
         {

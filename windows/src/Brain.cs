@@ -38,6 +38,7 @@ namespace XingPixel
         public int TurnEdits, Conflicts, Pokes, Excursions, MusicMinutes, GameBest;
         public List<long> PushTimes = new List<long>();
         public List<string> LunchDays = new List<string>();
+        public string SlotDay = ""; public int SlotSpins, Jackpots;
         // tamagotchi layer
         public double Hunger = 80, Clean = 90;      // 0..100, drift down over time
         public long CareAt;
@@ -87,7 +88,8 @@ namespace XingPixel
             new Sticker("clicker", "кликер", "тыкни Синсина 100 раз", "love"),
             new Sticker("konami", "секретный танец", "кликни по Синсину 7 раз очень быстро", "secret"),
             new Sticker("banana_word", "банановое слово", "спроси Синсина про бананы", "banana"),
-            new Sticker("noodle", "лапшичник", "пообедай с Синсином 5 разных дней", "lunch") };
+            new Sticker("noodle", "лапшичник", "пообедай с Синсином 5 разных дней", "lunch"),
+            new Sticker("jackpot", "джекпот", "выбей 777 в автомате", "slot") };
 
         public static readonly ShopItem[] ShopItems = {
             new ShopItem("cap", "acc", "кепка", 30, false), new ShopItem("bow", "acc", "бантик", 30, false), new ShopItem("flower", "acc", "цветок за ухом", 40, false),
@@ -336,6 +338,7 @@ namespace XingPixel
             return h;
         }
 
+        public static void GiveXp(Stats s, Dictionary<string, object> e, int amount) { AddXp(s, e, amount); }
         static void AddXp(Stats s, Dictionary<string, object> e, int amount)
         {
             int before = Level(s.Xp); s.Xp += amount; Hist(s).Xp += amount;

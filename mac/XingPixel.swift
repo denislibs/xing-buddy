@@ -233,7 +233,8 @@ let stickerList = [
     StickerDef(id: "clicker", title: "кликер", hint: "тыкни Синсина 100 раз", pose: "love"),
     StickerDef(id: "konami", title: "секретный танец", hint: "кликни по Синсину 7 раз очень быстро", pose: "secret"),
     StickerDef(id: "banana_word", title: "банановое слово", hint: "спроси Синсина про бананы", pose: "banana"),
-    StickerDef(id: "noodle", title: "лапшичник", hint: "пообедай с Синсином 5 разных дней", pose: "lunch")]
+    StickerDef(id: "noodle", title: "лапшичник", hint: "пообедай с Синсином 5 разных дней", pose: "lunch"),
+    StickerDef(id: "jackpot", title: "джекпот", hint: "выбей 777 в автомате", pose: "slot")]
 
 // Unlocks an easter-egg sticker once; the event line announces it.
 func sticker(_ s: inout Stats, _ e: inout [String: Any]?, _ id: String, _ cond: Bool) {
@@ -570,6 +571,8 @@ enum Synth {
                      : wav([[520, 110, 700], [0, 30], [700, 160, 460]], noise: false)   // "у-а"
             case "error": data = wav([[440, 380, 200]], noise: false)
             case "level": data = wav([[523, 80], [659, 80], [784, 80], [1046, 180]], noise: false)
+            case "reel": data = wav([[1400, 18]], noise: false)   // a reel stops
+            case "jackpot": data = wav([[784, 70], [988, 70], [1175, 70], [1568, 70], [1175, 70], [1568, 260]], noise: false)
             default: data = voice == "pig" ? wav([[160, 110, 120]], noise: true) : wav([[900, 40]], noise: false)
             }
             cache[key] = NSSound(data: data)
@@ -605,7 +608,7 @@ final class MascotCharacter {
     private var loaded: [String: [CGImage]] = [:]
     static let fallback = ["bash": "work", "type": "work", "read": "work", "run": "work", "work": "idle", "think": "idle", "done": "happy", "banana": "happy",
                            "love": "happy", "stretch": "happy", "happy": "idle", "wave": "happy", "error": "idle", "wait": "idle", "milk": "idle", "water": "milk",
-                           "lunch": "milk", "sleep": "idle", "home": "wave", "git_conflict": "error"]
+                           "lunch": "milk", "sleep": "idle", "home": "wave", "git_conflict": "error", "spotify": "music", "music": "happy", "levelup": "happy"]
 
     init?(dir: URL) {
         guard let d = readJSON(dir.appendingPathComponent("character.json")), let poses = d["poses"] as? [String: Any], !poses.isEmpty else { return nil }
@@ -662,6 +665,10 @@ final class BuiltIn {
         if cache.count > 60, let old = cache.keys.first(where: { $0 != key }) { cache.removeValue(forKey: old) }
         return f
     }
+    lazy var slotRows: [CGImage] = {
+        guard let s = NSImage(contentsOf: self.root.appendingPathComponent("slot/symbols.png"))?.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return [] }
+        return (0..<s.height).compactMap { s.cropping(to: CGRect(x: 0, y: $0, width: s.width, height: 1)) }
+    }()
     func aura(_ lvl: Int, front: Bool) -> [CGImage] {
         let n = auraCount(lvl); guard n > 0 else { return [] }
         let name = "\(n)_" + (front ? "front" : "back"), key = "aura/" + name
@@ -681,6 +688,45 @@ func composite(_ layers: [CGImage?], scale: CGFloat) -> NSImage {
     }
 }
 final class FlippedView: NSView { override var isFlipped: Bool { true } }
+
+// MARK: - Spotify via AppleScript (macOS asks once for permission to control Spotify)
+
+struct NowPlaying { var artist = "", title = "", playing = false, position = 0.0, duration = 0.0, artURL = "" }
+func spotifyRunning() -> Bool { !NSRunningApplication.runningApplications(withBundleIdentifier: "com.spotify.client").isEmpty }
+// Only talks to Spotify when it's already running ("tell application" would launch it).
+@discardableResult func spotify(_ command: String) -> String? {
+    guard spotifyRunning() else { return nil }
+    var err: NSDictionary?
+    return NSAppleScript(source: "tell application \"Spotify\" to " + command)?.executeAndReturnError(&err).stringValue
+}
+func readSpotify() -> NowPlaying? {
+    guard spotifyRunning() else { return nil }
+    let src = """
+    tell application "Spotify"
+        set st to player state as string
+        if st is "stopped" then return st
+        set t to current track
+        return st & "|||" & (artist of t) & "|||" & (name of t) & "|||" & (player position as string) & "|||" & ((duration of t) as string) & "|||" & (artwork url of t)
+    end tell
+    """
+    var err: NSDictionary?
+    guard let out = NSAppleScript(source: src)?.executeAndReturnError(&err).stringValue else { return NowPlaying() }
+    let p = out.components(separatedBy: "|||")
+    guard p.count >= 6 else { return NowPlaying() }
+    let d = { (s: String) -> Double in Double(s.replacingOccurrences(of: ",", with: ".")) ?? 0 }
+    return NowPlaying(artist: p[1], title: p[2], playing: p[0] == "playing", position: d(p[3]), duration: d(p[4]) / 1000, artURL: p[5])
+}
+// Shrinks an image to n×n pixels (drawn later without smoothing = pixel art).
+func pixelated(_ img: CGImage, _ n: Int) -> CGImage? {
+    guard let ctx = CGContext(data: nil, width: n, height: n, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                              bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+    ctx.interpolationQuality = .medium; ctx.draw(img, in: CGRect(x: 0, y: 0, width: n, height: n))
+    return ctx.makeImage()
+}
+
+// MARK: - slot machine: reel symbols come from sprites/slot/symbols.png (5px wide, one symbol per 6px), same as Windows
+let slotSymbols = ["seven", "cherry", "banana", "bar", "spark", "bug"]
+let slotReelX = [9, 15, 21], slotReelY = 32, slotReelH = 7, slotCell = 6
 
 // MARK: - Claude window lookup & keys
 
@@ -779,6 +825,8 @@ func writeReport(_ s: Stats, phrase: String) -> URL {
 final class SpriteView: NSView {
     var image: CGImage? { didSet { needsDisplay = true } }
     var back: CGImage?, front: CGImage?   // aura overlays, same stage size as the built-in sprite
+    var cover: CGImage?                   // pixel album cover while he DJs
+    var reels: [Double]?, reelRows: [CGImage] = []   // slot machine reel positions (in symbols) and the symbol strip rows
     var smooth = false
     var onClick: (() -> Void)?, onDoubleClick: (() -> Void)?, onDragEnd: (() -> Void)?, onDrop: (([URL]) -> Void)?
     var menuProvider: (() -> NSMenu)?
@@ -795,6 +843,21 @@ final class SpriteView: NSView {
         if let b = back { ctx.interpolationQuality = .none; ctx.draw(b, in: stage); ctx.interpolationQuality = smooth ? .high : .none }
         ctx.draw(img, in: CGRect(x: (bounds.width - w) / 2, y: 0, width: w, height: h))
         if let f = front { ctx.interpolationQuality = .none; ctx.draw(f, in: stage) }
+        ctx.interpolationQuality = .none
+        if let c = cover { ctx.draw(c, in: CGRect(x: stage.minX, y: stage.minY + 22 * stageFit, width: 11 * stageFit, height: 11 * stageFit)) }
+        if let pos = reels, !reelRows.isEmpty {
+            let n = reelRows.count
+            for r in 0..<3 {
+                for row in 0..<slotReelH {
+                    var src = Int(floor(pos[r] * Double(slotCell))) + row - 1; src = ((src % n) + n) % n
+                    let rect = CGRect(x: stage.minX + CGFloat(slotReelX[r]) * stageFit, y: stage.minY + CGFloat(44 - slotReelY - row - 1) * stageFit,
+                                      width: 5 * stageFit, height: stageFit)
+                    ctx.setFillColor(CGColor(srgbRed: 0.957, green: 0.945, blue: 0.918, alpha: 1)); ctx.fill(rect)
+                    ctx.draw(reelRows[src], in: rect)
+                    if row == 0 || row == slotReelH - 1 { ctx.setFillColor(CGColor(gray: 0, alpha: 0.25)); ctx.fill(rect) }
+                }
+            }
+        }
     }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     override func mouseDown(with e: NSEvent) {
@@ -907,6 +970,13 @@ final class Mascot: NSObject, NSTextFieldDelegate, NSWindowDelegate {
     var claude: ClaudeWindow?
     var lastActivity = Date.distantPast, activityStart = Date.distantPast, lastStretch = Date(), lastWater = Date()
     var focus = "off", focusEnd = Date()
+    // Spotify
+    var np: NowPlaying?, song = "", coverURL = "", coverImage: CGImage?, coverPixel: CGImage?, musicAt = Date.distantPast
+    let playerBar = NSVisualEffectView(), playerCover = NSImageView(), playerFill = NSView()
+    let playerTitle = NSTextField(labelWithString: ""), playerArtist = NSTextField(labelWithString: ""), playerPos = NSTextField(labelWithString: ""), playerLeft = NSTextField(labelWithString: "")
+    var playButton: NSButton?
+    // slot machine: reel i eases from slotFrom by slotDist and stops at slotStop(i)
+    var slotPos = [0.0, 0.0, 0.0], slotFrom = [0.0, 0.0, 0.0], slotDist = [0.0, 0.0, 0.0], slotT0: Date?, slotResult = [0, 0, 0], slotResolved = true, slotStopped = 0
     var weather: Weather?, weatherAt = Date.distantPast, usageFh = -1, usageSd = -1, usageAt = Date.distantPast
     var dropList = ""
 
@@ -965,14 +1035,20 @@ final class Mascot: NSObject, NSTextFieldDelegate, NSWindowDelegate {
         bar.layer?.borderColor = NSColor(white: 1, alpha: 0.18).cgColor; bar.layer?.borderWidth = 1
         bar.layer?.cornerRadius = 17; bar.layer?.masksToBounds = true
         let items: [(String, String, Selector)] = [("square.and.pencil", "Новый чат", #selector(newChat)), ("waveform", "Диктовка", #selector(voiceInput)),
-                                                  ("timer", "Помодоро: 25 минут фокуса", #selector(toggleFocus)), ("chevron.up", "Свернуть", #selector(toggleCompact))]
+                                                  ("timer", "Помодоро: 25 минут фокуса", #selector(toggleFocus)), ("7", "Крутануть автомат", #selector(spinSlot)),
+                                                  ("chevron.up", "Свернуть", #selector(toggleCompact))]
         var x: CGFloat = 4
         for (i, item) in items.enumerated() {
-            let b = NSButton(image: NSImage(systemSymbolName: item.0, accessibilityDescription: item.1) ?? NSImage(), target: self, action: item.2)
+            let b = item.0 == "7" ? NSButton(title: "7", target: self, action: item.2)
+                                  : NSButton(image: NSImage(systemSymbolName: item.0, accessibilityDescription: item.1) ?? NSImage(), target: self, action: item.2)
+            if item.0 == "7" {
+                b.attributedTitle = NSAttributedString(string: "7", attributes: [.font: NSFont.systemFont(ofSize: 16, weight: .black),
+                                                                                  .foregroundColor: NSColor(srgbRed: 0.9, green: 0.39, blue: 0.35, alpha: 1)])
+            }
             b.isBordered = false; b.toolTip = item.1; b.contentTintColor = tint
             b.frame = NSRect(x: x, y: 3, width: 40, height: 28); b.autoresizingMask = [.minXMargin, .maxXMargin]
             bar.addSubview(b)
-            if i == 2 { focusButton = b }; if i == 3 { chevron = b }
+            if i == 2 { focusButton = b }; if item.2 == #selector(toggleCompact) { chevron = b }
             x += 40
             if i < items.count - 1 {
                 let sep = NSView(frame: NSRect(x: x, y: 9, width: 1, height: 16))
@@ -983,6 +1059,41 @@ final class Mascot: NSObject, NSTextFieldDelegate, NSWindowDelegate {
         barFull = NSRect(x: (winW - (x + 4)) / 2, y: 4, width: x + 4, height: 34)
         bar.frame = collapsedBarFrame(); bar.alphaValue = 0; bar.isHidden = true
         root.addSubview(bar)
+        buildPlayer(in: root)
+    }
+
+    // Mini player above the hover bar while Spotify runs: cover, track, artist, progress with times, ⏮ ⏯ ⏭.
+    func buildPlayer(in root: NSView) {
+        let W: CGFloat = 200, H: CGFloat = 104
+        playerBar.material = .hudWindow; playerBar.blendingMode = .behindWindow; playerBar.state = .active
+        playerBar.appearance = NSAppearance(named: .darkAqua); playerBar.wantsLayer = true
+        playerBar.layer?.borderColor = NSColor(white: 1, alpha: 0.18).cgColor; playerBar.layer?.borderWidth = 1
+        playerBar.layer?.cornerRadius = 14; playerBar.layer?.masksToBounds = true
+        playerBar.frame = NSRect(x: (winW - W) / 2, y: barFull.maxY + 6, width: W, height: H)
+        playerCover.frame = NSRect(x: 10, y: H - 50, width: 40, height: 40); playerCover.imageScaling = .scaleProportionallyUpOrDown
+        playerCover.wantsLayer = true; playerCover.layer?.cornerRadius = 6; playerCover.layer?.masksToBounds = true
+        playerTitle.frame = NSRect(x: 58, y: H - 30, width: W - 66, height: 17); playerTitle.font = .systemFont(ofSize: 13, weight: .semibold); playerTitle.textColor = .white
+        playerArtist.frame = NSRect(x: 58, y: H - 47, width: W - 66, height: 15); playerArtist.font = .systemFont(ofSize: 11); playerArtist.textColor = .secondaryLabelColor
+        for l in [playerTitle, playerArtist] { l.lineBreakMode = .byTruncatingTail }
+        let track = NSView(frame: NSRect(x: 10, y: H - 60, width: W - 20, height: 4)); track.wantsLayer = true
+        track.layer?.backgroundColor = NSColor(white: 1, alpha: 0.19).cgColor; track.layer?.cornerRadius = 2
+        playerFill.frame = NSRect(x: 0, y: 0, width: 0, height: 4); playerFill.wantsLayer = true
+        playerFill.layer?.backgroundColor = NSColor(srgbRed: 0.114, green: 0.725, blue: 0.329, alpha: 1).cgColor; playerFill.layer?.cornerRadius = 2
+        track.addSubview(playerFill)
+        playerPos.frame = NSRect(x: 10, y: H - 74, width: 60, height: 13); playerLeft.frame = NSRect(x: W - 70, y: H - 74, width: 60, height: 13); playerLeft.alignment = .right
+        for l in [playerPos, playerLeft] { l.font = .monospacedDigitSystemFont(ofSize: 10, weight: .regular); l.textColor = .secondaryLabelColor }
+        let buttons: [(String, Selector, CGFloat)] = [("backward.fill", #selector(musicPrev), W / 2 - 50), ("pause.fill", #selector(musicToggle), W / 2 - 15),
+                                                      ("forward.fill", #selector(musicNext), W / 2 + 20)]
+        for (sym, sel, x) in buttons {
+            let b = NSButton(image: NSImage(systemSymbolName: sym, accessibilityDescription: nil) ?? NSImage(), target: self, action: sel)
+            b.isBordered = false; b.contentTintColor = sel == #selector(musicToggle) ? .white : tint
+            b.frame = NSRect(x: x, y: 2, width: 30, height: 26)
+            if sel == #selector(musicToggle) { playButton = b }
+            playerBar.addSubview(b)
+        }
+        for v in [playerCover, playerTitle, playerArtist, track, playerPos, playerLeft] as [NSView] { playerBar.addSubview(v) }
+        playerBar.alphaValue = 0; playerBar.isHidden = true
+        root.addSubview(playerBar)
     }
 
     func collapsedBarFrame() -> NSRect { NSRect(x: barFull.midX - barFull.width * 0.1, y: barFull.minY + barFull.height * 0.2, width: barFull.width * 0.2, height: barFull.height * 0.6) }
@@ -1001,18 +1112,22 @@ final class Mascot: NSObject, NSTextFieldDelegate, NSWindowDelegate {
         guard show != barShown else { return }
         barShown = show
         if show { bar.isHidden = false }
+        let withPlayer = show && np != nil
+        if withPlayer { playerBar.isHidden = false }
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = show ? 0.2 : 0.16
             ctx.timingFunction = CAMediaTimingFunction(name: show ? .easeOut : .easeIn)
             bar.animator().frame = show ? barFull : collapsedBarFrame()
             bar.animator().alphaValue = show ? 1 : 0
-        }, completionHandler: { [weak self] in guard let self = self, !self.barShown else { return }; self.bar.isHidden = true })
+            playerBar.animator().alphaValue = withPlayer ? 1 : 0
+        }, completionHandler: { [weak self] in guard let self = self, !self.barShown else { return }; self.bar.isHidden = true; self.playerBar.isHidden = true })
     }
 
     func menu() -> NSMenu {
         let m = NSMenu()
         for (title, sel) in [("Спросить Синсина…", #selector(openAsk)), ("Статистика за сегодня", #selector(showStats)), ("Квест дня", #selector(showQuest)),
-                             ("Путь Синсина (уровни)", #selector(openProgress)), ("Ачивки", #selector(showAchievements)), ("Отчёт за неделю", #selector(openReport))] {
+                             ("Путь Синсина (уровни)", #selector(openProgress)), ("Ачивки", #selector(showAchievements)), ("Отчёт за неделю", #selector(openReport)),
+                             ("Крутануть автомат", #selector(spinSlot))] {
             m.addItem(withTitle: title, action: sel, keyEquivalent: "").target = self
         }
         m.addItem(.separator())
@@ -1059,6 +1174,7 @@ final class Mascot: NSObject, NSTextFieldDelegate, NSWindowDelegate {
             return Date().timeIntervalSince(homeStartedAt!) < Double(builtIn.manifest.homeFrames ?? 48) / 9 ? "home" : "gone"
         }
         if scheduleDay() && minutes >= lunchFrom && minutes < lunchTo && idleFor > 10 { return "lunch" }
+        if !song.isEmpty { return "spotify" }
         if (hour >= 23 || hour < 6) && idleFor > 20 { return "sleep" }
         if idleFor > 180 { return "sleep" }
         if idleFor > 60 { return "milk" }
@@ -1090,6 +1206,9 @@ final class Mascot: NSObject, NSTextFieldDelegate, NSWindowDelegate {
         let auraOn = pose != "gone" && auraCount(lvl) > 0
         let ab = auraOn ? builtIn.aura(lvl, front: false) : [], af = auraOn ? builtIn.aura(lvl, front: true) : []
         sprite.back = ab.isEmpty ? nil : ab[k % ab.count]; sprite.front = af.isEmpty ? nil : af[k % af.count]
+        if Date().timeIntervalSince(musicAt) > 1.5 { musicAt = Date(); checkMusic() }
+        sprite.cover = pose == "spotify" && plugin == nil ? coverPixel : nil
+        slotTick(pose)
         sprite.image = frame(pose)
         if bubbleTimer && turnStart > 0 && (state == "thinking" || state == "working") {
             let ms = nowMs() - turnStart
@@ -1224,6 +1343,106 @@ final class Mascot: NSObject, NSTextFieldDelegate, NSWindowDelegate {
         pokePose = tricks.randomElement()!; pokeUntil = Date().addingTimeInterval(2.4)
         let wise = lvl >= 11 && Double.random(in: 0..<1) < 0.35
         if state == "idle" && focus != "focus" { say((wise ? Self.wisdom : Self.pokeLines).randomElement()!, wise ? 5 : 2) }
+    }
+
+    // MARK: Spotify
+
+    func checkMusic() {
+        guard cfg["music"] as? Bool ?? true else { if np != nil { np = nil; setSong(""); updatePlayer() }; return }
+        np = readSpotify()
+        if let n = np, !n.artURL.isEmpty, n.artURL != coverURL, let u = URL(string: n.artURL) {
+            coverURL = n.artURL; coverImage = nil; coverPixel = nil
+            URLSession.shared.dataTask(with: u) { [weak self] d, _, _ in
+                guard let d = d, let img = NSImage(data: d)?.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
+                DispatchQueue.main.async { self?.coverImage = img; self?.coverPixel = pixelated(img, 10); self?.updatePlayer() }
+            }.resume()
+        }
+        let now = np.map { $0.playing && !$0.title.isEmpty ? ($0.artist.isEmpty ? "" : $0.artist + " — ") + $0.title : "" } ?? ""
+        setSong(now); updatePlayer()
+    }
+    func setSong(_ now: String) {
+        guard now != song else { return }
+        song = now
+        if !song.isEmpty && state == "idle" && focus != "focus" { say("♪ " + short(song, 44), 5) }
+    }
+    func updatePlayer() {
+        guard let n = np else { playerBar.isHidden = true; playerBar.alphaValue = 0; return }
+        if barShown && playerBar.isHidden { playerBar.isHidden = false; playerBar.alphaValue = 1 }
+        playerTitle.stringValue = n.title.isEmpty ? "Spotify" : n.title; playerArtist.stringValue = n.artist
+        playerCover.image = coverImage.map { NSImage(cgImage: $0, size: NSSize(width: 40, height: 40)) }
+        playButton?.image = NSImage(systemSymbolName: n.playing ? "pause.fill" : "play.fill", accessibilityDescription: nil)
+        let frac = n.duration > 0 ? max(0, min(1, n.position / n.duration)) : 0
+        playerFill.frame.size.width = (playerFill.superview?.bounds.width ?? 180) * CGFloat(frac)
+        playerPos.stringValue = n.duration > 0 ? mmss(n.position) : ""; playerLeft.stringValue = n.duration > 0 ? "-" + mmss(n.duration - n.position) : ""
+    }
+    func mmss(_ s: Double) -> String { let t = Int(max(0, s)); return "\(t / 60):" + String(format: "%02d", t % 60) }
+    @objc func musicPrev() { spotify("previous track"); musicReact("prev") }
+    @objc func musicNext() { spotify("next track"); musicReact("next") }
+    @objc func musicToggle() { spotify("playpause"); musicReact("toggle") }
+    func musicReact(_ what: String) {
+        if what == "toggle" {
+            let was = np?.playing == true
+            pokePose = was ? "wave" : "happy"; pokeUntil = Date().addingTimeInterval(1.5); say(was ? "пауза" : "погнали!", 2)
+        } else { pokePose = "jump"; pokeUntil = Date().addingTimeInterval(1.2); say(what == "next" ? "некст!" : "давай ещё раз эту", 2) }
+        k = 0; musicAt = .distantPast
+    }
+
+    // MARK: slot machine (like Telegram's 🎰): pull the lever, three reels spin and stop one by one
+
+    func slotStop(_ i: Int) -> Double { 1.0 + 0.45 * Double(i) }
+    @objc func spinSlot() {
+        if plugin != nil { say("автомат только у Синсина", 3); return }
+        if slotT0 != nil && !slotResolved { return }
+        let n = Double(slotSymbols.count)
+        for i in 0..<3 {
+            slotResult[i] = Int.random(in: 0..<slotSymbols.count)
+            let cur = (slotPos[i].truncatingRemainder(dividingBy: n) + n).truncatingRemainder(dividingBy: n)
+            let extra = ((Double(slotResult[i]) - cur).truncatingRemainder(dividingBy: n) + n).truncatingRemainder(dividingBy: n)
+            slotFrom[i] = cur; slotDist[i] = extra + n * Double(3 + i)
+        }
+        slotT0 = Date(); slotResolved = false; slotStopped = 0
+        pokePose = "slot"; pokeUntil = Date().addingTimeInterval(slotStop(2) + 0.2); k = 0; bubbleUntil = .distantPast
+        beep("poke")
+    }
+    func slotTick(_ pose: String) {
+        guard let t0 = slotT0 else { sprite.reels = nil; return }
+        let t = Date().timeIntervalSince(t0)
+        for i in 0..<3 {
+            let x = min(1, t / slotStop(i))
+            slotPos[i] = slotFrom[i] + slotDist[i] * (1 - pow(1 - x, 3))
+            if x >= 1 && slotStopped == i { slotStopped += 1; slotPos[i] = Double(slotResult[i]); beep("reel") }
+        }
+        if sprite.reelRows.isEmpty { sprite.reelRows = builtIn.slotRows }
+        sprite.reels = pose == "slot" && plugin == nil ? slotPos : nil
+        if !slotResolved && t >= slotStop(2) { slotResolved = true; slotPayout() }
+    }
+    // Prizes: 777 — golden banana + 50 XP, three of a kind — 5 bananas + 10 XP, a pair — 1 banana; prizes stop after 30 spins a day.
+    func slotPayout() {
+        let a = slotResult[0], b = slotResult[1], c = slotResult[2]
+        let triple = a == b && b == c, jackpot = triple && slotSymbols[a] == "seven", pair = !triple && (a == b || b == c || a == c)
+        var e: [String: Any]? = [:]; var prizes = true
+        let s = withStats { st in
+            if (st.d["SlotDay"] as? String) != todayKey() { st.d["SlotDay"] = todayKey(); st["SlotSpins"] = 0 }
+            st["SlotSpins"] += 1; prizes = st["SlotSpins"] <= 30
+            guard prizes else { return }
+            if jackpot { st["GoldenBananas"] += 1; st["Jackpots"] += 1; addXp(&st, &e, 50); var none: [String: Any]? = nil; sticker(&st, &none, "jackpot", true) }
+            else if triple { st["Bananas"] += 5; addXp(&st, &e, 10) }
+            else if pair { st["Bananas"] += 1 }
+        }
+        xp = s["Xp"]; goldenBananas = s["GoldenBananas"]
+        var line: String, react: String, secs = 3.5
+        if jackpot { line = "777! ДЖЕКПОТ! золотой банан и +50 опыта"; react = "secret"; secs = 5; beep("jackpot"); notify("Синсин выбил 777!") }
+        else if triple { line = "три в ряд! +5 бананов"; react = "happy"; beep("level") }
+        else if pair { line = "пара! +1 банан"; react = "love" }
+        else { line = ["эх, мимо", "ну почти…", "автомат подкручен", "ещё разок?"].randomElement()!; react = "error" }
+        if !prizes && (jackpot || triple || pair) { line += "\n(призы на сегодня кончились, крутим для души)" }
+        pokeUntil = Date().addingTimeInterval(1.0)
+        let levelLine = e?["levelUp"] != nil ? e?["line"] as? String : nil
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { [weak self] in
+            guard let self = self else { return }
+            self.pokePose = react; self.pokeUntil = Date().addingTimeInterval(secs); self.k = 0; self.say(line, secs + 1)
+            if let l = levelLine { self.applySize(); self.say(l, 7); self.pokePose = "levelup"; self.pokeUntil = Date().addingTimeInterval(7); self.beep("level") }
+        }
     }
 
     // Dropped files: pick an action, the prompt is pasted into Claude's input (you press Return).

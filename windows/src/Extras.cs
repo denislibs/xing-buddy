@@ -56,6 +56,9 @@ namespace XingPixel
                             : Wav(new[] { new double[] { 520, 110, 700 }, new double[] { 0, 30 }, new double[] { 700, 160, 460 } }, false);   // "у-а"
                         break;
                     case "error": wav = Wav(new[] { new double[] { 440, 380, 200 } }, false); break;                                            // sigh
+                    case "reel": wav = Wav(new[] { new double[] { 1400, 18 } }, false); break;                                                   // reel stops
+                    case "jackpot": wav = Wav(new[] { new double[] { 784, 70 }, new double[] { 988, 70 }, new double[] { 1175, 70 }, new double[] { 1568, 70 },
+                                                      new double[] { 1175, 70 }, new double[] { 1568, 260 } }, false); break;
                     case "level": wav = Wav(new[] { new double[] { 523, 80 }, new double[] { 659, 80 }, new double[] { 784, 80 }, new double[] { 1046, 180 } }, false); break;
                     default: wav = skin == "pig" ? Wav(new[] { new double[] { 160, 110, 120 } }, true) : Wav(new[] { new double[] { 900, 40 } }, false); break;   // poke
                 }

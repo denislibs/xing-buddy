@@ -5,8 +5,11 @@ $Dir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $fw = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319"
 $wpf = "$fw\WPF"
 $refs = @("$wpf\PresentationFramework.dll", "$wpf\PresentationCore.dll", "$wpf\WindowsBase.dll", "$fw\System.Xaml.dll", "$fw\System.Web.Extensions.dll",
-          "$fw\System.Windows.Forms.dll", "$fw\System.Drawing.dll", "$fw\Microsoft.CSharp.dll", "$fw\System.Core.dll") | ForEach-Object { "/r:$_" }
-$src = "Sprites", "Brain", "Plugins", "Extras", "Game", "App" | ForEach-Object { "$Dir\src\$_.cs" }
+          "$fw\System.Windows.Forms.dll", "$fw\System.Drawing.dll", "$fw\Microsoft.CSharp.dll", "$fw\System.Core.dll", "$fw\System.Runtime.dll",
+          # WinRT metadata that ships with Windows 10/11: the media session API for Spotify (no SDK needed)
+          "$env:WINDIR\System32\WinMetadata\Windows.Media.winmd", "$env:WINDIR\System32\WinMetadata\Windows.Foundation.winmd",
+          "$env:WINDIR\System32\WinMetadata\Windows.Storage.winmd") | ForEach-Object { "/r:$_" }
+$src = "Sprites", "Brain", "Plugins", "Extras", "Game", "Media", "App" | ForEach-Object { "$Dir\src\$_.cs" }
 & "$fw\csc.exe" /nologo /target:winexe /optimize+ /nowarn:649,169,414 "/out:$Dir\xing-pixel.exe" @refs @src
 if ($LASTEXITCODE -ne 0) { throw "build failed" }
 Write-Host "Built $Dir\xing-pixel.exe"

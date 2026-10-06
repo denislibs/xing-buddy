@@ -146,7 +146,11 @@ namespace XingPixel
             { "gop", new Dictionary<string, string> { { "idle", "чё как, погнали?" }, { "thinking", "ща, соображаю…" }, { "working", "кручу братишку чётко" },
                                                       { "success", "по красоте!" }, { "error", "чё за дела…" }, { "waiting", "твой ход, братан" },
                                                       { "poke", "э, полегче|семки есть?|чё надо?|ровно всё" } } } };
-        string song = ""; DateTime musicMinuteAt = DateTime.Now; bool gameOffered; GameWindow game; string continueText;
+        string song = ""; DateTime musicMinuteAt = DateTime.Now;
+        // slot machine: reel positions animate from slotFrom by slotDist with an ease-out, reel i stopping at SlotStop(i)
+        double[] slotPos = new double[3], slotFrom = new double[3], slotDist = new double[3]; double slotT0 = -1; int[] slotResult; Image reelsImg; bool slotResolved; int slotStopped;
+        NowPlaying np; bool mediaApi = true, mediaBusy; int mediaFails;   // Spotify via the Windows media session API (falls back to the window title)
+        Border player; Image playerCover, coverPix; TextBlock playerTitle, playerArtist, playGlyph; Rectangle playerFill; bool gameOffered; GameWindow game; string continueText;
         Weather weather; DateTime weatherAt = DateTime.MinValue; int usageFh = -1, usageSd = -1; DateTime usageAt = DateTime.MinValue;
 
         List<Character> characters = new List<Character>(); Character plugin;
@@ -186,7 +190,7 @@ namespace XingPixel
             var hover = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(40) };
             hover.Tick += delegate { try { CheckHover(); } catch { } };
             hover.Start();
-            var music = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
+            var music = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
             music.Tick += delegate { try { CheckMusic(); } catch { } };
             music.Start();
             var slow = new DispatcherTimer { Interval = TimeSpan.FromSeconds(20) };
@@ -230,6 +234,12 @@ namespace XingPixel
             var host = new Grid { HorizontalAlignment = HorizontalAlignment.Center };
             host.Children.Add(backdropImg);
             host.Children.Add(extrasBack); host.Children.Add(sprite); host.Children.Add(extrasFront);
+            coverPix = new Image { IsHitTestVisible = false, Visibility = Visibility.Collapsed, HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top };
+            RenderOptions.SetBitmapScalingMode(coverPix, BitmapScalingMode.NearestNeighbor);
+            host.Children.Add(coverPix);
+            reelsImg = new Image { IsHitTestVisible = false, Visibility = Visibility.Collapsed };
+            RenderOptions.SetBitmapScalingMode(reelsImg, BitmapScalingMode.NearestNeighbor);
+            host.Children.Add(reelsImg);
             root.Children.Add(host);
 
             // Bottom bar: new chat, voice typing, focus timer, collapse. Hidden until hovered; grows from its centre.
@@ -244,12 +254,18 @@ namespace XingPixel
             row.Children.Add(Sep());
             row.Children.Add(BarButton("", "Банановый раннер", fg, delegate { OpenGame(); }));
             row.Children.Add(Sep());
+            var slotBtn = (Border)BarButton("7", "Крутануть автомат", fg, delegate { SpinSlot(); });
+            ((TextBlock)slotBtn.Child).FontFamily = new FontFamily("Segoe UI Black, Segoe UI"); ((TextBlock)slotBtn.Child).FontWeight = FontWeights.Black;
+            ((TextBlock)slotBtn.Child).Foreground = new SolidColorBrush(Color.FromRgb(0xE5, 0x64, 0x5A));
+            row.Children.Add(slotBtn);
+            row.Children.Add(Sep());
             var chev = BarButton("", "Свернуть", fg, delegate { ToggleCompact(); });
             chevron = (TextBlock)((Border)chev).Child;
             row.Children.Add(chev);
+            var col = new StackPanel(); col.Children.Add(BuildPlayer(fg)); col.Children.Add(row);
             bar = new Border { Background = new SolidColorBrush(Color.FromArgb(0xB8, 0x2C, 0x2B, 0x29)), BorderBrush = new SolidColorBrush(Color.FromArgb(0x38, 0xFF, 0xFF, 0xFF)),
                                BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(18), Padding = new Thickness(4, 3, 4, 3),
-                               HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 2, 0, 4), Child = row,
+                               HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 2, 0, 4), Child = col,
                                Opacity = 0, IsHitTestVisible = false, RenderTransformOrigin = new Point(0.5, 0.5),
                                RenderTransform = barScale = new ScaleTransform(0.2, 0.2),
                                Effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 12, ShadowDepth = 2, Opacity = 0.35, Direction = 270 } };
@@ -257,13 +273,136 @@ namespace XingPixel
             return root;
         }
 
+        // Mini player shown on top of the hover bar while Spotify runs: cover, track, artist, progress, ⏮ ⏯ ⏭.
+        UIElement BuildPlayer(Brush fg)
+        {
+            var light = new SolidColorBrush(Color.FromRgb(0xEE, 0xEB, 0xE3)); var gray = new SolidColorBrush(Color.FromRgb(0x9C, 0x98, 0x8E));
+            // cover + title/artist
+            playerCover = new Image { Width = 44, Height = 44, Clip = new RectangleGeometry(new Rect(0, 0, 44, 44), 8, 8) };
+            RenderOptions.SetBitmapScalingMode(playerCover, BitmapScalingMode.HighQuality);
+            playerTitle = new TextBlock { FontSize = 13, FontWeight = FontWeights.SemiBold, Foreground = light, TextTrimming = TextTrimming.CharacterEllipsis };
+            playerArtist = new TextBlock { FontSize = 11.5, Foreground = gray, TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, 2, 0, 0) };
+            var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 0, 0) };
+            text.Children.Add(playerTitle); text.Children.Add(playerArtist);
+            var head = new DockPanel(); DockPanel.SetDock(playerCover, Dock.Left); head.Children.Add(playerCover); head.Children.Add(text);
+            // progress + times
+            var track = new Grid { Height = 4, Margin = new Thickness(0, 10, 0, 0) };
+            track.Children.Add(new Rectangle { Fill = new SolidColorBrush(Color.FromArgb(0x30, 0xFF, 0xFF, 0xFF)), RadiusX = 2, RadiusY = 2 });
+            playerFill = new Rectangle { Fill = new SolidColorBrush(Color.FromRgb(0x1D, 0xB9, 0x54)), RadiusX = 2, RadiusY = 2, HorizontalAlignment = HorizontalAlignment.Left, Width = 0 };
+            track.Children.Add(playerFill);
+            playerPos = new TextBlock { FontSize = 10, Foreground = gray };
+            playerLeft = new TextBlock { FontSize = 10, Foreground = gray, HorizontalAlignment = HorizontalAlignment.Right };
+            var times = new Grid { Margin = new Thickness(0, 3, 0, 0) }; times.Children.Add(playerPos); times.Children.Add(playerLeft);
+            // controls, centred; play/pause is a round light button
+            var controls = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 2, 0, 0) };
+            controls.Children.Add(BarButton("\uE892", "Предыдущий трек", fg, delegate { Media.Previous(); MusicReact("prev"); }, 44));
+            playGlyph = new TextBlock { Text = "\uE769", FontFamily = new FontFamily("Segoe Fluent Icons, Segoe MDL2 Assets"), FontSize = 14,
+                                        Foreground = new SolidColorBrush(Color.FromRgb(0x1F, 0x1E, 0x1C)), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+            var play = new Border { Width = 34, Height = 34, CornerRadius = new CornerRadius(17), Background = light, Child = playGlyph, ToolTip = "Пауза / играть",
+                                    Cursor = Cursors.Hand, Margin = new Thickness(8, 0, 8, 0) };
+            play.MouseEnter += delegate { play.Background = Brushes.White; };
+            play.MouseLeave += delegate { play.Background = light; };
+            play.MouseLeftButtonUp += delegate { Media.Toggle(); MusicReact("toggle"); };
+            controls.Children.Add(play);
+            controls.Children.Add(BarButton("\uE893", "Следующий трек", fg, delegate { Media.Next(); MusicReact("next"); }, 44));
+            var col = new StackPanel { Width = PlayerW, Margin = new Thickness(6, 6, 6, 6) };
+            col.Children.Add(head); col.Children.Add(track); col.Children.Add(times); col.Children.Add(controls);
+            player = new Border { Child = col, Visibility = Visibility.Collapsed, BorderBrush = new SolidColorBrush(Color.FromArgb(0x24, 0xFF, 0xFF, 0xFF)),
+                                  BorderThickness = new Thickness(0, 0, 0, 1), Margin = new Thickness(0, 0, 0, 3), HorizontalAlignment = HorizontalAlignment.Center };
+            return player;
+        }
+
+        const double PlayerW = 192;
+        TextBlock playerPos, playerLeft;
+        static string Mmss(double sec) { int t = (int)Math.Max(0, sec); return t / 60 + ":" + (t % 60).ToString("00"); }
+
+        // ---------- slot machine (like Telegram's 🎰): pull the lever, three reels spin and stop one by one ----------
+        static double SlotStop(int i) { return 1.0 + 0.45 * i; }
+        void SpinSlot()
+        {
+            if (plugin != null) { Say("автомат только у Синсина", 3); return; }
+            if (slotT0 >= 0 && !slotResolved) return;
+            ComeHome();
+            int n = Sprites.SlotSymbols.Length;
+            slotResult = new int[3];
+            for (int i = 0; i < 3; i++)
+            {
+                slotResult[i] = rnd.Next(n);
+                double cur = ((slotPos[i] % n) + n) % n, extra = ((slotResult[i] - cur) % n + n) % n;
+                slotFrom[i] = cur; slotDist[i] = extra + n * (3 + i);
+            }
+            slotT0 = Now; slotResolved = false; slotStopped = 0;
+            pokePose = "slot"; pokeUntil = Now + SlotStop(2) + 0.2; k = 0; bubbleUntil = 0;
+            Beep("poke");
+        }
+
+        void SlotTick(string pose)
+        {
+            bool show = pose == "slot" && slotT0 >= 0 && plugin == null && exMode == "none";
+            reelsImg.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+            if (slotT0 < 0) return;
+            double t = Now - slotT0;
+            for (int i = 0; i < 3; i++)
+            {
+                double x = Math.Min(1, t / SlotStop(i));
+                slotPos[i] = slotFrom[i] + slotDist[i] * (1 - Math.Pow(1 - x, 3));
+                if (x >= 1 && slotStopped == i) { slotStopped++; slotPos[i] = slotResult[i]; Beep("reel"); }
+            }
+            if (show) reelsImg.Source = Freeze(BitmapSource.Create(Sprites.StageW, Sprites.StageH, 96, 96, PixelFormats.Bgra32, null, Sprites.SlotReels(slotPos), Sprites.StageW * 4));
+            if (!slotResolved && t >= SlotStop(2)) { slotResolved = true; SlotPayout(); }
+        }
+
+        // Prizes: 777 — golden banana + 50 XP, any three of a kind — 5 bananas + 10 XP, a pair — 1 banana. Prizes stop after 30 spins a day.
+        void SlotPayout()
+        {
+            int a = slotResult[0], b = slotResult[1], c = slotResult[2];
+            bool triple = a == b && b == c, jackpot = triple && Sprites.SlotSymbols[a] == "seven", pair = !triple && (a == b || b == c || a == c);
+            var e = new Dictionary<string, object>(); bool prizes = true;
+            try
+            {
+                Brain.WithStats(s => {
+                    if (s.SlotDay != Brain.Today()) { s.SlotDay = Brain.Today(); s.SlotSpins = 0; }
+                    s.SlotSpins++; prizes = s.SlotSpins <= 30;
+                    if (!prizes) return;
+                    if (jackpot) { s.GoldenBananas++; s.Jackpots++; Brain.GiveXp(s, e, 50); Brain.Sticker(s, null, "jackpot", true); }
+                    else if (triple) { s.Bananas += 5; Brain.GiveXp(s, e, 10); }
+                    else if (pair) s.Bananas += 1;
+                    xp = s.Xp; goldenBananas = s.GoldenBananas;
+                });
+            }
+            catch { }
+            string line; string react; double secs = 3.5;
+            if (jackpot) { line = "777! ДЖЕКПОТ! золотой банан и +50 опыта"; react = "secret"; secs = 5; Beep("jackpot"); Notify("Синсин выбил 777!"); }
+            else if (triple) { line = "три в ряд! +5 бананов"; react = "happy"; Beep("level"); }
+            else if (pair) { line = "пара! +1 банан"; react = "love"; }
+            else { line = new[] { "эх, мимо", "ну почти…", "автомат подкручен", "ещё разок?" }[rnd.Next(4)]; react = "error"; }
+            if (!prizes && (jackpot || triple || pair)) line += "\n(призы на сегодня кончились, крутим для души)";
+            // keep the result on screen a moment, then react
+            var hold = new DispatcherTimer { Interval = TimeSpan.FromSeconds(0.9) };
+            hold.Tick += delegate {
+                hold.Stop();
+                pokePose = react; pokeUntil = Now + secs; k = 0; Say(line, secs + 1);
+                if (e.ContainsKey("levelUp")) { frameCache.Clear(); ApplySize(); Say((string)e["line"], 7); pokePose = "levelup"; pokeUntil = Now + 7; Beep("level"); }
+            };
+            pokeUntil = Now + 1.0; hold.Start();
+        }
+
+        void MusicReact(string what)
+        {
+            if (what == "toggle" && np != null && np.Playing) { pokePose = "wave"; pokeUntil = Now + 1.5; Say("пауза", 2); }
+            else if (what == "toggle") { pokePose = "happy"; pokeUntil = Now + 1.5; Say("погнали!", 2); }
+            else { pokePose = "jump"; pokeUntil = Now + 1.2; Say(what == "next" ? "некст!" : "давай ещё раз эту", 2); }
+            k = 0;
+        }
+
         UIElement Sep() { return new Rectangle { Width = 1, Height = 16, Fill = new SolidColorBrush(Color.FromArgb(0x30, 0xFF, 0xFF, 0xFF)), VerticalAlignment = VerticalAlignment.Center }; }
 
-        UIElement BarButton(string glyph, string tip, Brush fg, Action click)
+        UIElement BarButton(string glyph, string tip, Brush fg, Action click) { return BarButton(glyph, tip, fg, click, 35); }
+        UIElement BarButton(string glyph, string tip, Brush fg, Action click, double width)
         {
             var t = new TextBlock { Text = glyph, FontFamily = new FontFamily("Segoe Fluent Icons, Segoe MDL2 Assets"), FontSize = 15, Foreground = fg,
                                     HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, RenderTransformOrigin = new Point(0.5, 0.5) };
-            var b = new Border { Width = 40, Height = 28, CornerRadius = new CornerRadius(14), Background = Brushes.Transparent, Child = t, ToolTip = tip, Cursor = Cursors.Hand };
+            var b = new Border { Width = width, Height = 28, CornerRadius = new CornerRadius(14), Background = Brushes.Transparent, Child = t, ToolTip = tip, Cursor = Cursors.Hand };
             var hover = new SolidColorBrush(Color.FromArgb(0x30, 0xFF, 0xFF, 0xFF));
             b.MouseEnter += delegate { b.Background = hover; };
             b.MouseLeave += delegate { b.Background = Brushes.Transparent; };
@@ -286,6 +425,7 @@ namespace XingPixel
             add("Покормить", Feed);
             add("Искупать", Bath);
             add("Банановый раннер", OpenGame);
+            add("Крутануть автомат", SpinSlot);
             add("Что я помню", ShowMemory);
             add("Продолжить вчерашнее", ContinueYesterday);
             menu.Items.Add(new Separator());
@@ -403,6 +543,7 @@ namespace XingPixel
             scale *= stage == "baby" ? 0.85 : stage == "guru" ? 1.05 : 1;
             double bw = Sprites.StageW * scale, bh = Sprites.StageH * scale;
             foreach (var img in new[] { extrasBack, extrasFront, backdropImg }) { img.Width = bw; img.Height = bh; }
+            coverPix.Width = coverPix.Height = 11 * scale; reelsImg.Width = bw; reelsImg.Height = bh;
             backdropImg.Visibility = backdrop != "none" ? Visibility.Visible : Visibility.Collapsed;
             if (backdrop != "none") backdropImg.Source = Freeze(BitmapSource.Create(Sprites.StageW, Sprites.StageH, 96, 96, PixelFormats.Bgra32, null, Sprites.Backdrop(backdrop), Sprites.StageW * 4));
             if (plugin != null)
@@ -435,7 +576,7 @@ namespace XingPixel
                 return Now - homeStartedAt < (double)Sprites.HomeFrames / Sprites.Fps ? "home" : "gone";
             }
             if (ScheduleDay() && t >= lunchFrom && t < lunchTo && idleFor > 10) return "lunch";
-            if (musicOn && song.Length > 0) return "music";
+            if (musicOn && song.Length > 0) return "spotify";
             if ((h >= 23 || h < 6) && idleFor > 20) return "sleep";
             if (idleFor > 180) return "sleep";
             if (idleFor > 60) return "milk";
@@ -461,7 +602,7 @@ namespace XingPixel
             sprite.RenderTransform = new ScaleTransform(facingLeft && exMode != "none" ? -1 : 1, 1);
             sprite.Source = Frame(pose, k);
             Sprites.Flies = clean < 15 && plugin == null;
-            bool extras = pose == "work" || helpers > 0 || Sprites.Flies;
+            bool extras = pose == "work" || helpers > 0 || Sprites.Flies || Sprites.AuraCount(Level) > 0;
             extrasBack.Visibility = extrasFront.Visibility = extras ? Visibility.Visible : Visibility.Collapsed;
             if (extras)
             {
@@ -469,6 +610,12 @@ namespace XingPixel
                 extrasBack.Source = Freeze(BitmapSource.Create(Sprites.StageW, Sprites.StageH, 96, 96, PixelFormats.Bgra32, null, Sprites.RenderExtras(pose, k, sessions, helpers, mini, false), Sprites.StageW * 4));
                 extrasFront.Source = Freeze(BitmapSource.Create(Sprites.StageW, Sprites.StageH, 96, 96, PixelFormats.Bgra32, null, Sprites.RenderExtras(pose, k, sessions, helpers, mini, true), Sprites.StageW * 4));
             }
+
+            SlotTick(pose);
+            // The pixel album cover floats next to him while he DJs.
+            bool showCover = pose == "spotify" && plugin == null && np != null && np.Cover != null && exMode == "none";
+            coverPix.Visibility = showCover ? Visibility.Visible : Visibility.Collapsed;
+            if (showCover) { double s = sprite.Width / Sprites.StageW; coverPix.Margin = new Thickness(-7 * s, (11 + (k % 16 < 8 ? 0 : 1)) * s, 0, 0); }
 
             if (bubbleTimer && turnStart > 0 && (state == "thinking" || state == "working"))
             {
@@ -596,6 +743,7 @@ namespace XingPixel
 
         void ApplyEvent(Dictionary<string, object> e)
         {
+            object act; if (e.TryGetValue("action", out act) && Convert.ToString(act) == "spin") { SpinSlot(); return; }
             object v;
             var now = DateTime.Now;
             if ((now - lastActivity).TotalMinutes > 10) activityStart = now;
@@ -1013,10 +1161,52 @@ namespace XingPixel
         // ---------- music: Spotify shows "Artist - Song" as its window title while playing ----------
         void CheckMusic()
         {
-            string title = "";
-            if (musicOn) foreach (var p in Process.GetProcessesByName("Spotify")) { try { if (!string.IsNullOrEmpty(p.MainWindowTitle)) title = p.MainWindowTitle; } catch { } }
-            bool playing = title.Length > 0 && !title.StartsWith("Spotify", StringComparison.OrdinalIgnoreCase);
-            string now = playing ? title : "";
+            if (musicOn && mediaApi)
+            {
+                if (mediaBusy) return;
+                mediaBusy = true;
+                ThreadPool.QueueUserWorkItem(delegate {
+                    NowPlaying r = null; bool failed = false;
+                    try { r = Media.Read(); } catch (Exception e) { failed = !(e is TimeoutException); if (failed) Program.Log("media: " + e.Message); }
+                    Dispatcher.BeginInvoke(new Action(() => {
+                        mediaBusy = false;
+                        // A failure hides the player; only a run of them (API really unavailable) switches to the window-title fallback.
+                        mediaFails = failed ? mediaFails + 1 : 0;
+                        if (mediaFails >= 5) mediaApi = false;
+                        ApplyMusic(r);
+                    }));
+                });
+                return;
+            }
+            if (!musicOn) { ApplyMusic(null); return; }
+            CheckMusicTitle();
+        }
+
+        // Playing track from the media API: drives the DJ pose, the mini player and the pixel cover.
+        void ApplyMusic(NowPlaying r)
+        {
+            bool coverChanged = r == null || np == null || r.Cover != np.Cover;
+            np = r;
+            player.Visibility = r != null ? Visibility.Visible : Visibility.Collapsed;
+            if (r != null)
+            {
+                playerTitle.Text = r.Title.Length > 0 ? r.Title : "Spotify"; playerArtist.Text = r.Artist;
+                playGlyph.Text = r.Playing ? "\uE769" : "\uE768";
+                playerFill.Width = r.Duration > 0 ? PlayerW * Math.Max(0, Math.Min(1, r.Position / r.Duration)) : 0;
+                playerPos.Text = r.Duration > 0 ? Mmss(r.Position) : ""; playerLeft.Text = r.Duration > 0 ? "-" + Mmss(r.Duration - r.Position) : "";
+                if (coverChanged)
+                {
+                    playerCover.Source = r.Cover;
+                    coverPix.Source = r.Cover != null ? Freeze(new TransformedBitmap(r.Cover, new ScaleTransform(10.0 / r.Cover.PixelWidth, 10.0 / r.Cover.PixelHeight))) : null;
+                }
+            }
+            string now = r != null && r.Playing && r.Title.Length > 0 ? (r.Artist.Length > 0 ? r.Artist + " — " : "") + r.Title : "";
+            SetSong(now);
+        }
+
+        void SetSong(string now)
+        {
+            bool playing = now.Length > 0;
             if (now != song)
             {
                 song = now;
@@ -1024,6 +1214,15 @@ namespace XingPixel
             }
             if (!playing) musicMinuteAt = DateTime.Now;
             else if ((DateTime.Now - musicMinuteAt).TotalMinutes >= 1) { musicMinuteAt = DateTime.Now; Award("meloman", s => s.MusicMinutes >= 60, s => s.MusicMinutes++); }
+        }
+
+        // Fallback (no media API): Spotify shows "Artist - Song" as its window title while playing.
+        void CheckMusicTitle()
+        {
+            string title = "";
+            if (musicOn) foreach (var p in Process.GetProcessesByName("Spotify")) { try { if (!string.IsNullOrEmpty(p.MainWindowTitle)) title = p.MainWindowTitle; } catch { } }
+            bool playing = title.Length > 0 && !title.StartsWith("Spotify", StringComparison.OrdinalIgnoreCase);
+            SetSong(playing ? title : "");
         }
 
         // ---------- memory ----------
@@ -1310,6 +1509,11 @@ namespace XingPixel
                 }
             }
             Sprites.Rank = 1; Sprites.SetStage("adult");
+            // Slot machine reel symbols: slot/symbols.png, 5px wide, one symbol per 6px (macOS draws the reels from it).
+            string sdir = System.IO.Path.Combine(outDir, "slot"); Directory.CreateDirectory(sdir);
+            var strip = Sprites.SlotStrip();
+            var senc = new PngBitmapEncoder(); senc.Frames.Add(BitmapFrame.Create(BitmapSource.Create(strip.W, strip.H, 96, 96, PixelFormats.Bgra32, null, Sprites.ToBgra(strip), strip.W * 4)));
+            using (var fs = File.Create(System.IO.Path.Combine(sdir, "symbols.png"))) senc.Save(fs);
             // Banana-runner sprites: 2 frames side by side.
             string gdir = System.IO.Path.Combine(outDir, "game"); Directory.CreateDirectory(gdir);
             foreach (var kind in new[] { "bug", "error", "stack", "banana", "goldbanana", "cloud" })
@@ -1338,6 +1542,11 @@ namespace XingPixel
             if (args.Length == 2 && args[0] == "--state")
             {
                 try { var e = new Dictionary<string, object>(); e["state"] = args[1]; Brain.WriteEvent(e); } catch { }
+                return 0;
+            }
+            if (args.Length == 1 && args[0] == "--spin")   // pull the slot machine lever from the command line
+            {
+                try { var e = new Dictionary<string, object>(); e["action"] = "spin"; Brain.WriteEvent(e); } catch { }
                 return 0;
             }
             if (args.Length == 1 && args[0] == "--install") return Installer.Install();

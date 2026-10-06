@@ -20,6 +20,7 @@ cat > "$APP/Contents/Info.plist" <<'EOF'
   <key>CFBundleShortVersionString</key><string>1.0</string>
   <key>LSMinimumSystemVersion</key><string>12.0</string>
   <key>LSUIElement</key><true/>
+  <key>NSAppleEventsUsageDescription</key><string>Синсин показывает, что играет в Spotify, и переключает треки.</string>
 </dict></plist>
 EOF
 # Ad-hoc signature so macOS runs it and remembers the Accessibility permission.

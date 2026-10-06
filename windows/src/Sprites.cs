@@ -36,6 +36,7 @@ namespace XingPixel
         // Global look switches (set by the app before rendering; part of its frame-cache key).
         public static string Stage = "adult";
         public static bool Dirt, Flies;
+        static bool PhonesGreen;   // the "spotify" pose wears green headphones
         public static int Rank = 1;   // level: drives the rank gear (badge, belt, golden fur, aura, halo)
         public static bool AuraOn = true;   // off while exporting bodies for macOS (the aura ships as separate overlay strips)
         // Levels where his body looks different; every other level looks like the closest one below.
@@ -53,7 +54,7 @@ namespace XingPixel
             "home", "gone", "lunch", "bash", "stretch", "water",
             "git_commit", "git_push", "git_pull", "git_fetch", "git_merge", "git_conflict", "git_rebase", "git_branch", "git_stash",
             "git_log", "git_diff", "git_status", "git_reset", "git_tag", "git_cherry", "git_pr", "git_ci",
-            "walk", "sit", "music", "jump", "secret", "full", "plan", "bath", "levelup" };
+            "walk", "sit", "music", "jump", "secret", "full", "plan", "bath", "levelup", "spotify", "slot" };
 
         // git palette
         const uint BOX = 0xFFB98A55, BOX2 = 0xFF8E6538, TAPE = 0xFFD8B47A, STAMP = 0xFFD8443C, ROCKET = 0xFFE9E4DA, FLAME = 0xFFF29A3C,
@@ -79,6 +80,8 @@ namespace XingPixel
                    HAT = 0xFFD8443C, FUR = 0xFFF7F3EC, GLS = 0xFF15171A, HP = 0xFF3B3F48, HPC = 0xFF5A6070,
                    SCF = 0xFFC73E3A, GOLD = 0xFFF2C14C, GOLD2 = 0xFFC9962A, UMB = 0xFF4F7FD6, UMB2 = 0xFF3A62B0,
                    GLASS = 0xFFCFEAF7, WATER = 0xFF6CB4E0,
+                   SLOT = 0xFFB8BEC8, SLOT2 = 0xFFE4E8EE, SLOT3 = 0xFF7C8390, REELBG = 0xFFF4F1EA,
+                   SPG = 0xFF1DB954, SPG2 = 0xFF15803A, VINYL = 0xFF1A1A1C, VINYL2 = 0xFF3A3A40, DECK = 0xFF2E3238, DECK2 = 0xFF4A505A,
                    CAP = 0xFF3B6FC4, CAP2 = 0xFF2A548F, BEARD = 0xFFEDEAE4, MUD = 0xFF5E4632, PETAL = 0xFFF7F3EC;
 
         // ---------- primitives (logical coordinates; grids may have headroom above y=0) ----------
@@ -213,9 +216,9 @@ namespace XingPixel
                     for (int x = 6; x <= 26; x++)
                     {
                         double t = (x - 16) / 10.5; int y = Rnd(top + 1 - Math.Sqrt(Math.Max(0, 1 - t * t)) * 4);
-                        Px(g, x + dx, y, HP); Px(g, x + dx, y + 1, HP);
+                        Px(g, x + dx, y, PhonesGreen ? SPG2 : HP); Px(g, x + dx, y + 1, PhonesGreen ? SPG2 : HP);
                     }
-                    Ell(g, 5 + dx, eye - 1, 2.6, 3.6, HPC); Ell(g, 27 + dx, eye - 1, 2.6, 3.6, HPC);
+                    Ell(g, 5 + dx, eye - 1, 2.6, 3.6, PhonesGreen ? SPG : HPC); Ell(g, 27 + dx, eye - 1, 2.6, 3.6, PhonesGreen ? SPG : HPC);
                     break;
                 case "scarf":
                     Rect(g, 9 + dx, neck, 15, 2, SCF);
@@ -290,6 +293,52 @@ namespace XingPixel
                 if (ph == 2 || ph == 3) { Px(sp, 0, 2, c); Px(sp, 4, 2, c); Px(sp, 2, 0, c); Px(sp, 2, 4, c); }
                 (Math.Sin(a) < 0 ? back : front).Add(new Layer(sp, Rnd(18 + Math.Cos(a) * 17), Rnd(22 + Math.Sin(a) * 9 - 6)));
             }
+        }
+
+        // ---------- slot machine reels ----------
+        // Six 5x5 symbols stacked on a strip (1px gap); a reel window shows 7 rows of it, centre symbol in rows 1..5.
+        public static readonly string[] SlotSymbols = { "seven", "cherry", "banana", "bar", "spark", "bug" };
+        public const int SlotCell = 6, SlotReelH = 7;
+        static readonly int[] SlotReelLX = { 5, 11, 17 };                  // body-grid x of the reel windows (y 22..28)
+        public static readonly int[] SlotReelX = { 9, 15, 21 };           // the same windows on the 40x44 stage
+        public const int SlotReelY = 32;
+        public static PixGrid SlotStrip()
+        {
+            var g = new PixGrid(5, SlotCell * SlotSymbols.Length);
+            for (int i = 0; i < SlotSymbols.Length; i++)
+            {
+                int y = i * SlotCell;
+                switch (SlotSymbols[i])
+                {
+                    case "seven": Pat(g, 0, y, new[] { "#####", "....#", "...#.", "..#..", "..#.." }, R); break;
+                    case "cherry": Pat2(g, 0, y, new[] { "..ee.", ".e..e", "ii.ii", "ii.ii", "....." }, LEAF, R); break;
+                    case "banana": Pat2(g, 0, y, new[] { "....e", "...ie", "..ii.", "iii..", ".i..." }, Y2, Y); break;
+                    case "bar": Pat2(g, 0, y, new[] { ".....", "iiiii", "ieeei", "iiiii", "....." }, Wh, 0xFF1F1B18); break;
+                    case "spark": Pat(g, 0, y, new[] { "..#..", "#.#.#", ".###.", "#.#.#", "..#.." }, CL); break;
+                    case "bug": Pat2(g, 0, y, new[] { "e...e", ".iii.", "iiiii", ".iii.", "i.i.i" }, DK, 0xFF7A5FB0); break;
+                }
+            }
+            return g;
+        }
+        static PixGrid slotStrip;
+        // The three reels at the given positions (in symbols; fractional while spinning) as a stage-sized overlay.
+        public static byte[] SlotReels(double[] pos)
+        {
+            if (slotStrip == null) slotStrip = SlotStrip();
+            var g = new PixGrid(StageW, StageH); int H = slotStrip.H;
+            for (int r = 0; r < 3; r++)
+                for (int row = 0; row < SlotReelH; row++)
+                {
+                    int src = (int)Math.Floor(pos[r] * SlotCell) + row - 1; src = ((src % H) + H) % H;
+                    bool edge = row == 0 || row == SlotReelH - 1;
+                    for (int x = 0; x < 5; x++)
+                    {
+                        uint c = slotStrip[x, src]; if (c == 0) c = REELBG;
+                        if (edge) c = 0xFF000000 | (((c >> 16) & 0xFF) * 3 / 4) << 16 | (((c >> 8) & 0xFF) * 3 / 4) << 8 | ((c & 0xFF) * 3 / 4);
+                        g[SlotReelX[r] + x, SlotReelY + row] = c;
+                    }
+                }
+            return ToBgra(g);
         }
 
         // ---------- bodies ----------
@@ -774,6 +823,8 @@ namespace XingPixel
         // lookX/lookY (-1..1): where the open eyes look (used to follow the mouse in idle).
         public static List<Layer> Pose(string name, int k, string skin, string acc, int lookX, int lookY)
         {
+            PhonesGreen = name == "spotify";
+            if (PhonesGreen) acc = "headphones";
             Func<MP, PixGrid> body = p => { p.Acc = acc; return Body(skin, p); };
             if (name.StartsWith("git_")) return M(body(GitPose(name, k)));
             switch (name)
@@ -828,6 +879,52 @@ namespace XingPixel
                         },
                         ArmsFront = new[] { A(4, 23, 2.2, 2), A(28, 23, 2.2, 2) },
                         Glyph = g => { for (int i = 0; i < 3; i++) { int ph = (k + i * 5) % 15; Ell(g, 8 + i * 8 + (ph % 3), 20 - ph, 1.3, 1.3, 0xFFD8EEF8); } } }));
+                }
+                case "slot":       // peeks over a slot machine and pulls the lever; the reels are a separate overlay (SlotReels)
+                {
+                    int pull = k % 48; double ball = pull >= 1 && pull <= 6 ? new[] { 0, 16, 20, 24, 24, 20, 16 }[pull] : 12;
+                    return M(body(new MP { Eyes = pull < 8 ? "focus" : "o", Ly = 1, Mouth = "o", ArmsBack = new double[0][],
+                        Prop = (g, dx, dy) => {
+                            Rect(g, 3, 18, 22, 14, SLOT); Rect(g, 3, 18, 22, 1, SLOT2); Rect(g, 3, 31, 22, 1, SLOT3);
+                            for (int i = 0; i < 6; i++) Px(g, 5 + i * 3, 19, (i + k / 3) % 2 == 0 ? Y : R);   // chasing lights
+                            Rect(g, 4, 21, 19, 9, DK);
+                            foreach (int x in SlotReelLX) Rect(g, x, 22, 5, 7, REELBG);
+                            Rect(g, 6, 30, 15, 1, SLOT3);
+                            Line(g, 25, 26, 27, 26, SLOT3); Line(g, 27, 26, 27, ball, SLOT2); Ell(g, 27, ball - 1, 1.8, 1.8, R); Px(g, 26.5, ball - 2, 0xFFFFB0A8);
+                        },
+                        ArmsFront = new[] { A(7, 18, 2.3, 2), A(27, ball, 2.2, 2) } }));
+                }
+                case "spotify":    // music is playing: first half DJs at a deck (spins the record, scratches), second half dances
+                {
+                    Action<PixGrid> notes = g => {
+                        int t = k % 12;
+                        Pat(g, 0, 7 - t / 2, new[] { ".##", ".#.", "##." }, t < 9 ? Wh : 0xFF9A9AA0);
+                        int t2 = (k + 6) % 12;
+                        Pat(g, 28, 6 - t2 / 2, new[] { "###", "#.#", "#.#" }, t2 < 9 ? 0xFFB6F2C8 : 0xFF6A9A7A);
+                    };
+                    if (k % 48 < 24)
+                    {
+                        int sc = new[] { 0, 1, 2, 1 }[(k / 2) % 4];
+                        bool nod = k % 4 < 2;
+                        return M(body(new MP { Dy = nod ? 0 : 1, Eyes = k % 12 < 6 ? "focus" : "happy", Mouth = "smile", ArmsBack = new double[0][],
+                            Prop = (g, dx, dy) => {
+                                Rect(g, 2, 24, 28, 7, DECK); Rect(g, 2, 24, 28, 1, DECK2);
+                                Ell(g, 10, 26.5, 5, 1.8, VINYL); Ell(g, 10, 26.5, 3, 1, VINYL2); Ell(g, 10, 26.5, 1, 0.6, SPG);
+                                double a = k * Math.PI / 6; Px(g, 10 + Math.Cos(a) * 4, 26.5 + Math.Sin(a) * 1.4, 0xFF8A8A92);
+                                Rect(g, 19, 25, 8, 1, DECK2); Rect(g, 20 + (k / 4) % 6, 24, 2, 2, SPG);
+                                for (int i = 0; i < 5; i++)   // level meter on the deck
+                                {
+                                    int h = 1 + (k * 5 + i * 7 + (k / 3) * i) % 4;
+                                    for (int y = 0; y < h; y++) Px(g, 19 + i * 2, 29 - y, y >= 3 ? R : y >= 2 ? Y : SPG);
+                                }
+                            },
+                            ArmsFront = new[] { A(9 + sc, 23, 2.3, 2), A(22 + (k / 4) % 6, 22, 2.3, 2) } }));
+                    }
+                    int ph = (k / 3) % 4; bool up = ph % 2 == 0;
+                    return M(body(new MP { Dy = up ? -1 : 1, Dx = new[] { -1, 0, 1, 0 }[ph], Eyes = up ? "closed" : "happy", Mouth = up ? "o" : "smile",
+                        FootL = up ? -1 : 0, FootR = up ? 0 : 1, ArmsBack = new double[0][],
+                        ArmsFront = ph < 2 ? new[] { A(5, 11, 2.3, 4), A(26, 22, 2.5, 3) } : new[] { A(7, 22, 2.5, 3), A(27, 11, 2.3, 4) },
+                        Glyph = notes }));
                 }
                 case "levelup":    // level up: hops with arms up while stars burst out and an arrow rises
                 {
