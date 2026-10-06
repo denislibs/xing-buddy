@@ -829,9 +829,9 @@ final class SpriteView: NSView {
     var cover: CGImage?                   // pixel album cover while he DJs
     var reels: [Double]?, reelRows: [CGImage] = []   // slot machine reel positions (in symbols) and the symbol strip rows
     var smooth = false
-    var onClick: (() -> Void)?, onDoubleClick: (() -> Void)?, onDragEnd: (() -> Void)?, onDrop: (([URL]) -> Void)?
+    var onDragStart: (() -> Void)?, onClick: (() -> Void)?, onDoubleClick: (() -> Void)?, onDragEnd: (() -> Void)?, onDrop: (([URL]) -> Void)?
     var menuProvider: (() -> NSMenu)?
-    private var downAt = NSPoint.zero, originAt = NSPoint.zero, moved = false
+    private var downAt = NSPoint.zero, originAt = NSPoint.zero, moved = false, dragged = false
 
     override init(frame: NSRect) { super.init(frame: frame); registerForDraggedTypes([.fileURL]) }
     required init?(coder: NSCoder) { fatalError() }
@@ -863,14 +863,15 @@ final class SpriteView: NSView {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     override func mouseDown(with e: NSEvent) {
         if e.clickCount == 2 { onDoubleClick?(); moved = true; return }
-        downAt = NSEvent.mouseLocation; originAt = window?.frame.origin ?? .zero; moved = false
+        downAt = NSEvent.mouseLocation; originAt = window?.frame.origin ?? .zero; moved = false; dragged = false
     }
     override func mouseDragged(with e: NSEvent) {
         let p = NSEvent.mouseLocation, dx = p.x - downAt.x, dy = p.y - downAt.y
         if abs(dx) + abs(dy) > 3 { moved = true }
+        if moved { onDragStart?(); dragged = true }
         window?.setFrameOrigin(NSPoint(x: originAt.x + dx, y: originAt.y + dy))
     }
-    override func mouseUp(with e: NSEvent) { if e.clickCount >= 2 { return }; if moved { onDragEnd?() } else { onClick?() } }
+    override func mouseUp(with e: NSEvent) { if dragged { onDragEnd?(); return }; if e.clickCount >= 2 { return }; if moved { onDragEnd?() } else { onClick?() } }
     override func rightMouseDown(with e: NSEvent) { if let m = menuProvider?() { NSMenu.popUpContextMenu(m, with: e, for: self) } }
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation { .copy }
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
@@ -953,6 +954,8 @@ final class Mascot: NSObject, NSTextFieldDelegate, NSWindowDelegate {
     let sprite = SpriteView(frame: .zero)
     let bubble = BubbleView(frame: NSRect(x: 0, y: 250, width: 240, height: 150))
     let bar = NSVisualEffectView()
+    var missingSince: Date?
+    var dragging = false   // place() must not snap the window back while it is being dragged
     var barFull = NSRect.zero, barShown = false, hoverLostAt: Date?
     var chevron: NSButton?, focusButton: NSButton?
     var askPanel: KeyPanel?, askAnswer: NSTextView?, settingsWindow: NSWindow?, progressWindow: NSWindow?
@@ -996,7 +999,8 @@ final class Mascot: NSObject, NSTextFieldDelegate, NSWindowDelegate {
 
         sprite.onClick = { [weak self] in self?.poke() }
         sprite.onDoubleClick = { [weak self] in self?.openAsk() }
-        sprite.onDragEnd = { [weak self] in self?.saveOffsetFromWindow() }
+        sprite.onDragStart = { [weak self] in self?.dragging = true }
+        sprite.onDragEnd = { [weak self] in self?.saveOffsetFromWindow(); self?.dragging = false }
         sprite.onDrop = { [weak self] urls in self?.dropped(urls) }
         sprite.menuProvider = { [weak self] in self?.menu() ?? NSMenu() }
         root.addSubview(sprite); root.addSubview(bubble)
@@ -1004,6 +1008,11 @@ final class Mascot: NSObject, NSTextFieldDelegate, NSWindowDelegate {
         applySize()
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
         buildStatusItem()
+        // A click in Claude raises its window over the panel; put the panel back at once instead of waiting for the next timer tick.
+        NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp]) { [weak self] _ in
+            for d in [0.0, 0.03, 0.1] { DispatchQueue.main.asyncAfter(deadline: .now() + d) { self?.place() } }
+        }
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] _ in self?.place() }
 
         say(Self.lines["idle"]!, 4)
         Timer.scheduledTimer(withTimeInterval: 1.0 / 9, repeats: true) { [weak self] _ in self?.tick() }
@@ -1038,6 +1047,7 @@ final class Mascot: NSObject, NSTextFieldDelegate, NSWindowDelegate {
         let items: [(String, String, Selector)] = [("square.and.pencil", "Новый чат", #selector(newChat)), ("waveform", "Диктовка", #selector(voiceInput)),
                                                   ("timer", "Помодоро: 25 минут фокуса", #selector(toggleFocus)), ("7", "Крутануть автомат", #selector(spinSlot)),
                                                   ("chevron.up", "Свернуть", #selector(toggleCompact))]
+        let content = NSView(frame: .zero)
         var x: CGFloat = 4
         for (i, item) in items.enumerated() {
             let b = item.0 == "7" ? NSButton(title: "7", target: self, action: item.2)
@@ -1047,17 +1057,22 @@ final class Mascot: NSObject, NSTextFieldDelegate, NSWindowDelegate {
                                                                                   .foregroundColor: NSColor(srgbRed: 0.9, green: 0.39, blue: 0.35, alpha: 1)])
             }
             b.isBordered = false; b.toolTip = item.1; b.contentTintColor = tint
-            b.frame = NSRect(x: x, y: 3, width: 40, height: 28); b.autoresizingMask = [.minXMargin, .maxXMargin]
-            bar.addSubview(b)
+            b.frame = NSRect(x: x, y: 3, width: 40, height: 28)
+            content.addSubview(b)
             if i == 2 { focusButton = b }; if item.2 == #selector(toggleCompact) { chevron = b }
             x += 40
             if i < items.count - 1 {
                 let sep = NSView(frame: NSRect(x: x, y: 9, width: 1, height: 16))
-                sep.wantsLayer = true; sep.layer?.backgroundColor = NSColor(white: 1, alpha: 0.15).cgColor; sep.autoresizingMask = [.minXMargin, .maxXMargin]
-                bar.addSubview(sep); x += 1
+                sep.wantsLayer = true; sep.layer?.backgroundColor = NSColor(white: 1, alpha: 0.15).cgColor
+                content.addSubview(sep); x += 1
             }
         }
         barFull = NSRect(x: (winW - (x + 4)) / 2, y: 4, width: x + 4, height: 34)
+        // Fixed-size content centred in the bar: the bar animates its frame, the buttons must not drift.
+        bar.frame = barFull
+        content.frame = bar.bounds
+        content.autoresizingMask = [.minXMargin, .maxXMargin, .minYMargin, .maxYMargin]
+        bar.addSubview(content)
         bar.frame = collapsedBarFrame(); bar.alphaValue = 0; bar.isHidden = true
         root.addSubview(bar)
         buildPlayer(in: root)
@@ -1692,11 +1707,24 @@ final class Mascot: NSObject, NSTextFieldDelegate, NSWindowDelegate {
     // MARK: placement & bar actions
 
     func place() {
-        guard let c = findClaude() else { if panel.isVisible { panel.orderOut(nil) }; claude = nil; return }
+        if dragging { return }
+        guard let c = findClaude() else {
+            // The window list can miss Claude for a moment while it re-layers on click; only hide after it stays gone.
+            if missingSince == nil { missingSince = Date() }
+            if Date().timeIntervalSince(missingSince!) > 0.8 { if panel.isVisible { panel.orderOut(nil) }; claude = nil }
+            return
+        }
+        missingSince = nil
         claude = c
         let x = max(c.frame.minX, c.frame.maxX - cfgRight - winW), y = max(c.frame.minY + cfgBottom, c.frame.minY)
         if panel.frame.origin != NSPoint(x: x, y: y) { panel.setFrameOrigin(NSPoint(x: x, y: y)) }
-        panel.order(.above, relativeTo: c.number)   // just above Claude, not above other apps
+        // While Claude (or we) are frontmost, float above it so clicks inside Claude never bury the panel for a frame;
+        // otherwise sit just above Claude's window and not above other apps.
+        let front = NSWorkspace.shared.frontmostApplication
+        let wantLevel: NSWindow.Level = (front?.localizedName == "Claude" || front?.processIdentifier == ProcessInfo.processInfo.processIdentifier) ? .floating : .normal
+        if panel.level != wantLevel { panel.level = wantLevel }
+        if wantLevel == .normal { panel.order(.above, relativeTo: c.number) }
+        else if !panel.isVisible { panel.orderFront(nil) }
     }
     func saveOffsetFromWindow() {
         guard let c = claude else { return }
