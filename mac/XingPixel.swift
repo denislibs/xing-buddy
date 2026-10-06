@@ -704,15 +704,16 @@ func readSpotify() -> NowPlaying? {
     let src = """
     tell application "Spotify"
         set st to player state as string
-        if st is "stopped" then return st
+        if st is "stopped" then return ""
         set t to current track
         return st & "|||" & (artist of t) & "|||" & (name of t) & "|||" & (player position as string) & "|||" & ((duration of t) as string) & "|||" & (artwork url of t)
     end tell
     """
     var err: NSDictionary?
-    guard let out = NSAppleScript(source: src)?.executeAndReturnError(&err).stringValue else { return NowPlaying() }
+    // No track (stopped, starting up, shutting down, or no permission yet): no player.
+    guard let out = NSAppleScript(source: src)?.executeAndReturnError(&err).stringValue else { return nil }
     let p = out.components(separatedBy: "|||")
-    guard p.count >= 6 else { return NowPlaying() }
+    guard p.count >= 6, !p[2].isEmpty else { return nil }
     let d = { (s: String) -> Double in Double(s.replacingOccurrences(of: ",", with: ".")) ?? 0 }
     return NowPlaying(artist: p[1], title: p[2], playing: p[0] == "playing", position: d(p[3]), duration: d(p[4]) / 1000, artURL: p[5])
 }

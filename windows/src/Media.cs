@@ -47,6 +47,7 @@ namespace XingPixel
             try { info = session.GetPlaybackInfo(); }
             catch { session = null; mgr = null; return null; }   // the session died between the lookup and the call
             var props = Wait(session.TryGetMediaPropertiesAsync());
+            if (string.IsNullOrEmpty(props.Title)) return null;   // no track (Spotify starting up or shutting down): no player
             var tl = session.GetTimelineProperties();
             var np = new NowPlaying { Artist = props.Artist ?? "", Title = props.Title ?? "",
                                       Playing = info.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing,
