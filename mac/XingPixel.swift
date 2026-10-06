@@ -932,7 +932,7 @@ extension NSButton {
 final class Mascot: NSObject, NSTextFieldDelegate, NSWindowDelegate {
     static let poseFor = ["idle": "idle", "thinking": "think", "working": "work", "success": "done", "error": "error", "waiting": "wait"]
     static let lines = ["idle": "Ну что, погнали?", "thinking": "думаю…", "working": "кручу братишку", "success": "готово!", "error": "ой…", "waiting": "твой ход"]
-    static let idleLines: [String: (String, Double)] = ["milk": ("молочко…", 4), "home": ("урааа, домой!", 0), "gone": ("ушёл домой, до завтра", 0),
+    static let idleLines: [String: (String, Double)] = ["milk": ("молочко…", 4), "home": ("урааа, домой!", 0), "gone": ("ушёл домой. тыкни в домик — вернусь на часик", 6),
                                                         "lunch": ("обед, не беспокоить", 0), "night": ("иди спать, ночь на дворе", 5)]
     static let pokeLines = ["не тыкай", "ммм?", "отстань", "щекотно", "я занят, вообще-то"]
     static let wisdom = ["баг, который не воспроизводится, всё ещё баг", "лучший код — ненаписанный", "сначала прочитай ошибку целиком",
@@ -970,7 +970,7 @@ final class Mascot: NSObject, NSTextFieldDelegate, NSWindowDelegate {
     var k = 0
     var claude: ClaudeWindow?
     var lastActivity = Date.distantPast, activityStart = Date.distantPast, lastStretch = Date(), lastWater = Date()
-    var focus = "off", focusEnd = Date()
+    var focus = "off", focusEnd = Date(), overtimeUntil = Date.distantPast
     // Spotify
     var np: NowPlaying?, song = "", coverURL = "", coverImage: CGImage?, coverPixel: CGImage?, musicAt = Date.distantPast
     let playerBar = NSVisualEffectView(), playerCover = NSImageView(), playerFill = NSView()
@@ -1170,7 +1170,7 @@ final class Mascot: NSObject, NSTextFieldDelegate, NSWindowDelegate {
         if focus == "focus" { return "type" }
         let c = Calendar.current.dateComponents([.hour, .minute], from: Date())
         let hour = c.hour ?? 12, minutes = hour * 60 + (c.minute ?? 0), idleFor = Date().timeIntervalSince(stateAt)
-        if scheduleDay() && minutes >= homeAfter && idleFor > 10 {
+        if scheduleDay() && minutes >= homeAfter && idleFor > 10 && Date() >= overtimeUntil {
             if homeStartedAt == nil { homeStartedAt = Date(); k = 0 }
             return Date().timeIntervalSince(homeStartedAt!) < Double(builtIn.manifest.homeFrames ?? 48) / 9 ? "home" : "gone"
         }
@@ -1183,8 +1183,7 @@ final class Mascot: NSObject, NSTextFieldDelegate, NSWindowDelegate {
     }
 
     func frame(_ pose: String) -> CGImage? {
-        if pose == "gone" { return nil }
-        if let p = plugin {
+        if let p = plugin, pose != "gone" {   // "gone" is the little house, the same for every character
             let f = p.frames(p.resolve(pose)); guard !f.isEmpty else { return nil }
             if pose == "home" { return f[min(f.count - 1, Int(Date().timeIntervalSince(homeStartedAt ?? Date()) * p.fps))] }
             return f[Int(Date().timeIntervalSince1970 * p.fps) % f.count]
@@ -1332,7 +1331,11 @@ final class Mascot: NSObject, NSTextFieldDelegate, NSWindowDelegate {
 
     func poke() {
         k = 0; beep("poke")
-        if lastIdlePose == "gone" { say("я ушёл, завтра приходи", 3); return }
+        if lastIdlePose == "gone" {   // clicking the house calls him back for an hour of overtime
+            overtimeUntil = Date().addingTimeInterval(3600); homeStartedAt = nil; pokePose = "run"; pokeUntil = Date().addingTimeInterval(1.5)
+            say(["ладно, ещё часик поработаю…", "сверхурочные? за бананы!", "уже бегу, только тапки надену"].randomElement()!, 4)
+            return
+        }
         if mood < 50 {
             pokePose = "banana"; pokeUntil = Date().addingTimeInterval(3); say("ням, спасибо!", 3)
             mood = withStats { st in st.mood += 6; st["Bananas"] += 1 }.mood

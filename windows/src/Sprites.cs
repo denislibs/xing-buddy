@@ -341,6 +341,29 @@ namespace XingPixel
             return ToBgra(g);
         }
 
+        // ---------- "gone": he went home — a little house with a lit window, smoke and a moon (stage coordinates) ----------
+        static PixGrid House(int k)
+        {
+            var g = new PixGrid(StageW, StageH);
+            const uint WALL = 0xFFC9A27A, WALL2 = 0xFFB08A63, ROOF = 0xFFB0503A, ROOF2 = 0xFF8E3C2C, LIT = 0xFFF2D27A, LIT2 = 0xFFE8B54A;
+            Rect(g, 25, 17, 3, 7, 0xFF7A4A3A);                                          // chimney
+            for (int r = 0; r < 9; r++) Rect(g, 10 + r, 27 - r, 22 - 2 * r, 1, r % 3 == 0 ? ROOF2 : ROOF);   // roof
+            Rect(g, 12, 28, 18, 13, WALL); Rect(g, 12, 28, 18, 1, WALL2);              // walls
+            Rect(g, 14, 31, 6, 5, LIT); Rect(g, 14, 33, 6, 1, LIT2); Rect(g, 16, 31, 1, 5, WALL2);   // lit window
+            if (k % 48 < 30) { Rect(g, 18, 33, 2, 2, 0xFF5A4A3E); Px(g, 18, 32, 0xFF5A4A3E); }  // his silhouette at the window
+            Rect(g, 22, 33, 5, 8, WOOD); Px(g, 25, 37, GOLD);                            // door
+            Outline(g, O);
+            for (int i = 0; i < 3; i++)                                                  // smoke puffs drifting up
+            {
+                int t = (k + i * 16) % 48;
+                Ell(g, 26.5 + Math.Sin(t * 0.3) * 1.2 + t * 0.08, 15 - t / 4.0, 0.7 + t / 60.0, 0.6 + t / 70.0, t < 30 ? 0xFF9A968E : 0xFF6E6A64);
+            }
+            Ell(g, 7, 9, 3, 3, Y); Ell(g, 8.3, 8, 2.6, 2.6, 0);                         // moon
+            foreach (var st in new[] { new[] { 15, 5 }, new[] { 22, 2 }, new[] { 35, 8 } })
+                if ((k / 6 + st[0]) % 4 != 0) Px(g, st[0], st[1], 0xFFEDE6C8);
+            return g;
+        }
+
         // ---------- bodies ----------
         static PixGrid Body(string skin, MP p)
         {
@@ -1032,7 +1055,7 @@ namespace XingPixel
                         Prop = Bindle });
                     return new List<Layer> { new Layer(m, 4 + off, 2) };
                 }
-                case "gone": return new List<Layer>();
+                case "gone": return new List<Layer> { new Layer(House(k), 0, -Top) };
                 case "bash":
                 {
                     int cyc = k % 24; bool enter = cyc >= 12 && cyc < 14; int a = k % 2;

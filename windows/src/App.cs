@@ -98,7 +98,7 @@ namespace XingPixel
         static readonly Dictionary<string, KeyValuePair<string, double>> IdleLines = new Dictionary<string, KeyValuePair<string, double>> {
             { "milk", new KeyValuePair<string, double>("молочко…", 4) },
             { "home", new KeyValuePair<string, double>("урааа, домой!", 0) },
-            { "gone", new KeyValuePair<string, double>("ушёл домой, до завтра", 0) },
+            { "gone", new KeyValuePair<string, double>("ушёл домой. тыкни в домик — вернусь на часик", 6) },
             { "lunch", new KeyValuePair<string, double>("обед, не беспокоить", 0) },
             { "night", new KeyValuePair<string, double>("иди спать, ночь на дворе", 5) } };
         static readonly string[] PokeLines = { "не тыкай", "ммм?", "отстань", "щекотно", "я занят, вообще-то" };
@@ -118,7 +118,7 @@ namespace XingPixel
         bool scheduleWeekdaysOnly = true;
         // state
         string state = "idle", poseOverride, lastStamp = "", lastIdlePose = "";
-        double stateAt, bubbleUntil, pokeUntil, homeStartedAt = -1, lastMoodAction, lastUsageWarn = -9999;
+        double stateAt, bubbleUntil, pokeUntil, homeStartedAt = -1, overtimeUntil = -1, lastMoodAction, lastUsageWarn = -9999;
         string pokePose, bubbleBase = ""; bool bubbleTimer;
         long lastEventTs, turnStart; double mood = 60; int sessions = 1, helpers, xp, goldenBananas;
         Queue<Dictionary<string, object>> pendingEvents = new Queue<Dictionary<string, object>>();
@@ -493,9 +493,8 @@ namespace XingPixel
 
         BitmapSource Frame(string pose, int i)
         {
-            if (plugin != null)
+            if (plugin != null && pose != "gone")   // "gone" is the little house, the same for every character
             {
-                if (pose == "gone") return null;
                 var fr = plugin.Frames(plugin.Resolve(pose));
                 int idx = pose == "home" && homeStartedAt >= 0 ? Math.Min(fr.Length - 1, (int)((Now - homeStartedAt) * plugin.Fps)) : (int)(Now * plugin.Fps) % fr.Length;
                 return fr[idx];
@@ -570,7 +569,7 @@ namespace XingPixel
             if (exMode == "sit" || exMode == "perch") return "sit";
 
             var t = DateTime.Now.TimeOfDay; double idleFor = Now - stateAt; int h = DateTime.Now.Hour;
-            if (ScheduleDay() && t >= homeAfter && idleFor > 10)
+            if (ScheduleDay() && t >= homeAfter && idleFor > 10 && Now >= overtimeUntil)
             {
                 if (homeStartedAt < 0) { homeStartedAt = Now; k = 0; }
                 return Now - homeStartedAt < (double)Sprites.HomeFrames / Sprites.Fps ? "home" : "gone";
@@ -602,7 +601,7 @@ namespace XingPixel
             sprite.RenderTransform = new ScaleTransform(facingLeft && exMode != "none" ? -1 : 1, 1);
             sprite.Source = Frame(pose, k);
             Sprites.Flies = clean < 15 && plugin == null;
-            bool extras = pose == "work" || helpers > 0 || Sprites.Flies || Sprites.AuraCount(Level) > 0;
+            bool extras = pose == "work" || helpers > 0 || Sprites.Flies || (Sprites.AuraCount(Level) > 0 && pose != "gone");
             extrasBack.Visibility = extrasFront.Visibility = extras ? Visibility.Visible : Visibility.Collapsed;
             if (extras)
             {
@@ -861,7 +860,12 @@ namespace XingPixel
             clickTimes.Add(Now); clickTimes.RemoveAll(x => Now - x > 3);
             if (clickTimes.Count >= 7) { clickTimes.Clear(); pokePose = "secret"; pokeUntil = Now + 5; Say("секретный танец!", 4); Award("konami", s => true, null); return; }
             Award("clicker", s => s.Pokes >= 100, s => s.Pokes++);
-            if (lastIdlePose == "gone") { Say("я ушёл, завтра приходи", 3); return; }
+            if (lastIdlePose == "gone")   // clicking the house calls him back for an hour of overtime
+            {
+                overtimeUntil = Now + 3600; homeStartedAt = -1; pokePose = "run"; pokeUntil = Now + 1.5;
+                Say(new[] { "ладно, ещё часик поработаю…", "сверхурочные? за бананы!", "уже бегу, только тапки надену" }[rnd.Next(3)], 4);
+                return;
+            }
             if (mood < 50 || hunger < 60) { Feed(); return; }
             string[] pokeLines = Phrase("poke") != null ? Phrase("poke").Split('|') : PokeLines;
             var tricks = new List<string> { "wave", "happy" };
