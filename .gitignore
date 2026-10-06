@@ -1,0 +1,8 @@
+# runtime data and build output
+windows/*.exe
+windows/*.json
+windows/*.log
+windows/reports/
+backup/
+mac/XingPixel.app/
+*.zip
